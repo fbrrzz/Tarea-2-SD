@@ -1,0 +1,91 @@
+version: "3.9"
+
+services:
+  # ─── Kafka (KRaft, sin Zookeeper) ────────────────────────────────────────────
+  kafka:
+    image: apache/kafka:3.9.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  # ─── Redis (caché) ────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+
+  # ─── Generador de Respuestas ──────────────────────────────────────────────────
+  response_generator:
+    build: ./response_generator
+    container_name: response_generator
+    environment:
+      PORT: 8000
+      FAILURE_RATE: "0.0"   # 0.0 = sin fallos, 0.3 = 30% fallos aleatorios
+    ports:
+      - "8000:8000"
+
+  # ─── Sistema de Métricas ──────────────────────────────────────────────────────
+  metrics:
+    build: ./metrics
+    container_name: metrics
+    ports:
+      - "8080:8080"
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  # ─── Consumidor(es) Kafka ─────────────────────────────────────────────────────
+  consumer:
+    build: ./consumer
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+      REDIS_HOST: redis
+      RESPONSE_GENERATOR_URL: http://response_generator:8000
+      METRICS_URL: http://metrics:8080
+      MAX_RETRIES: "3"
+      CONSUMER_GROUP: geo-consumers
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      response_generator:
+        condition: service_started
+      metrics:
+        condition: service_started
+    deploy:
+      replicas: 1   # Cambiar a 2, 3, etc. para múltiples consumers
+
+  # ─── Generador de Tráfico ─────────────────────────────────────────────────────
+  producer:
+    build: ./producer
+    container_name: producer
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+      QUERIES_PER_SECOND: "10"
+      DISTRIBUTION: zipf          # zipf | uniform
+      DURATION_SECONDS: "60"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      consumer:
+        condition: service_started
