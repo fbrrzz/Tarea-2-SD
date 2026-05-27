@@ -62,7 +62,7 @@ docker compose up -d kafka redis response_generator metrics
 
 ```bash
 # Listar tópicos (debe responder sin error)
-docker exec kafka /opt/kafka/bin/kafka-topics.sh \
+docker exec kafka kafka-topics \
   --bootstrap-server localhost:9092 --list
 ```
 
@@ -164,7 +164,7 @@ curl -X POST "http://localhost:8000/set_failure_rate?rate=0.0"
 
 ```bash
 # Ver mensajes en el tópico principal (Ctrl+C para salir)
-docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+docker exec kafka kafka-console-consumer \
   --bootstrap-server localhost:9092 \
   --topic geo-queries \
   --from-beginning \
@@ -174,7 +174,7 @@ docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
 ### 2. Tópicos creados automáticamente
 
 ```bash
-docker exec kafka /opt/kafka/bin/kafka-topics.sh \
+docker exec kafka kafka-topics \
   --bootstrap-server localhost:9092 --list
 # Deberías ver: geo-queries, geo-queries-retry, geo-queries-dlq
 ```
@@ -182,7 +182,7 @@ docker exec kafka /opt/kafka/bin/kafka-topics.sh \
 ### 3. Consumer lag (backlog)
 
 ```bash
-docker exec kafka /opt/kafka/bin/kafka-consumer-groups.sh \
+docker exec kafka kafka-consumer-groups \
   --bootstrap-server localhost:9092 \
   --group geo-consumers \
   --describe
@@ -218,6 +218,20 @@ docker compose logs -f consumer           # todos los consumers
 docker compose logs -f response_generator
 docker compose logs -f producer
 ```
+
+
+---
+
+## Configuración de la Caché (Redis)
+
+Para cumplir con la rúbrica de la Tarea 2, el sistema incluye una configuración de caché definida con las siguientes características:
+
+* **Tamaño Máximo:** `128 MB`
+* **Política de Remoción (Algoritmo):** `allkeys-lru` (Least Recently Used)
+* **TTL (Time to Live):** Definido a nivel de código base dentro de `consumer/consumer.py`.
+* **Motor:** Redis 7
+
+*Nota: El límite de memoria y la política están configurados de forma nativa en el `docker-compose.yml` en los parámetros del contenedor `redis`. La caché se llena de manera automática a medida que fluyen las consultas (patrón Cache-Aside).*
 
 ---
 

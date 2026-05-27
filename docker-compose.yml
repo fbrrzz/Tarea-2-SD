@@ -1,26 +1,37 @@
 version: "3.9"
 
 services:
-  # ─── Kafka (KRaft, sin Zookeeper) ────────────────────────────────────────────
+  # ─── Zookeeper (Coordinador) ──────────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  # ─── Kafka (Modo Zookeeper - Imagen Confluent) ───────────────────────────────
   kafka:
-    image: apache/kafka:3.9.0
+    image: confluentinc/cp-kafka:7.6.0
     container_name: kafka
     ports:
       - "9092:9092"
+    depends_on:
+      - zookeeper
     environment:
-      KAFKA_NODE_ID: 1
-      KAFKA_PROCESS_ROLES: broker,controller
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      # Configuración de red interna y externa para Docker
+      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:9092'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:9092'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'PLAINTEXT:PLAINTEXT'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      KAFKA_LOG_DIRS: /var/lib/kafka/data
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      # En las imágenes de Confluent, los comandos están directo en el PATH (más limpio)
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server kafka:9092 --list || exit 1"]
       interval: 10s
       timeout: 10s
       retries: 10
@@ -39,7 +50,7 @@ services:
     container_name: response_generator
     environment:
       PORT: 8000
-      FAILURE_RATE: "0.0"   # 0.0 = sin fallos, 0.3 = 30% fallos aleatorios
+      FAILURE_RATE: "0.0"
     ports:
       - "8000:8000"
 
@@ -73,7 +84,7 @@ services:
       metrics:
         condition: service_started
     deploy:
-      replicas: 1   # Cambiar a 2, 3, etc. para múltiples consumers
+      replicas: 1
 
   # ─── Generador de Tráfico ─────────────────────────────────────────────────────
   producer:
@@ -82,7 +93,7 @@ services:
     environment:
       KAFKA_BOOTSTRAP: kafka:9092
       QUERIES_PER_SECOND: "10"
-      DISTRIBUTION: zipf          # zipf | uniform
+      DISTRIBUTION: zipf
       DURATION_SECONDS: "60"
     depends_on:
       kafka:
