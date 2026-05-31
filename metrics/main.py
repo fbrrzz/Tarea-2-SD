@@ -26,6 +26,7 @@ metrics = {
     "last_failure_at": None,
     "recovered_at":    None,
     "recovered_count": 0,
+    "backlog_size":    0,
 }
 
 class EventIn(BaseModel):
@@ -58,6 +59,9 @@ def record_event(ev: EventIn):
         m["recovered_count"] += 1
         if m["last_failure_at"] and not m["recovered_at"]:
             m["recovered_at"] = time.time()
+    elif ev.event == "backlog":
+        if ev.latency_ms is not None:   # reutilizamos el campo como valor numérico
+            m["backlog_size"] = int(ev.latency_ms)
     return {"ok": True}
 
 @app.get("/metrics")
@@ -82,6 +86,7 @@ def get_metrics():
         "error_count":      m["errors"],
         "recovered_count":  m["recovered_count"],
         "recovery_time_s":  recovery_time,
+        "backlog_size":     m["backlog_size"],
         "latency_p50_ms":   round(statistics.median(lats), 2) if lats else None,
         "latency_p95_ms":   round(sorted(lats)[int(len(lats) * 0.95)], 2) if len(lats) >= 20 else None,
         "uptime_s":         round(elapsed, 1),
@@ -95,5 +100,6 @@ def reset():
         "latencies": deque(maxlen=10000),
         "start_time": time.time(),
         "last_failure_at": None, "recovered_at": None, "recovered_count": 0,
+        "backlog_size": 0,
     })
     return {"ok": True}
