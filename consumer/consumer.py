@@ -9,7 +9,7 @@ Consumidor Kafka
 - Reporta todas las métricas al servicio de métricas
 """
 
-import json, os, time, logging, socket
+import json, os, time, logging, socket, threading
 import redis, requests
 from kafka import KafkaConsumer, KafkaProducer
 from kafka.errors import KafkaError
@@ -152,6 +152,29 @@ def main():
     consumer = make_consumer()
     producer = make_producer()
     cache    = make_redis()
+
+    # ── Hilo de backlog: reporta consumer lag cada 10 segundos ───────────────
+    def backlog_reporter():
+        from kafka import KafkaAdminClient
+        from kafka.structs import TopicPartition
+        while True:
+            try:
+                # Usamos el mismo consumer para obtener el lag
+                partitions = consumer.partitions_for_topic(TOPIC_MAIN) or set()
+                total_lag = 0
+                for p in partitions:
+                    tp = TopicPartition(TOPIC_MAIN, p)
+                    end_offsets = consumer.end_offsets([tp])
+                    committed   = consumer.committed(tp) or 0
+                    total_lag  += max(end_offsets.get(tp, 0) - committed, 0)
+                report("backlog", latency_ms=total_lag)
+                log.debug("BACKLOG %d mensajes pendientes", total_lag)
+            except Exception as e:
+                log.debug("backlog_reporter error: %s", e)
+            time.sleep(10)
+
+    t = threading.Thread(target=backlog_reporter, daemon=True)
+    t.start()
 
     for msg in consumer:
         try:

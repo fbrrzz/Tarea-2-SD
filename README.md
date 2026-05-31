@@ -2,11 +2,11 @@
 
 ## Requisitos
 
-| Herramienta | Versión mínima | Instalación |
-|-------------|---------------|-------------|
-| Docker      | 24+           | `sudo apt install docker.io` |
-| Docker Compose Plugin | 2.20+ | incluido con Docker Desktop / `sudo apt install docker-compose-plugin` |
-| (Opcional) curl + python3 | — | para ver métricas desde terminal |
+| Herramienta               | Versión mínima | Instalación                                                            |
+| ------------------------- | -------------- | ---------------------------------------------------------------------- |
+| Docker                    | 24+            | `sudo apt install docker.io`                                           |
+| Docker Compose Plugin     | 2.20+          | incluido con Docker Desktop / `sudo apt install docker-compose-plugin` |
+| (Opcional) curl + python3 | —              | para ver métricas desde terminal                                       |
 
 > **No necesitas instalar Kafka, Python ni Redis localmente.** Todo corre dentro de Docker.
 
@@ -22,7 +22,7 @@ tarea2/
 │   └── producer.py             ← generador de tráfico (Zipf / Uniforme)
 ├── consumer/
 │   ├── Dockerfile
-│   └── consumer.py             ← consumidor Kafka + caché + reintentos + DLQ
+│   └── consumer.py             ← consumidor Kafka + caché + reintentos + DLQ + reporte de backlog
 ├── response_generator/
 │   ├── Dockerfile
 │   └── main.py                 ← API REST que procesa consultas geoespaciales
@@ -181,6 +181,9 @@ docker exec kafka kafka-topics \
 
 ### 3. Consumer lag (backlog)
 
+El backlog se reporta automáticamente en `/metrics` como `backlog_size` cada 10 segundos.
+Para consultarlo directamente en Kafka:
+
 ```bash
 docker exec kafka kafka-consumer-groups \
   --bootstrap-server localhost:9092 \
@@ -196,6 +199,7 @@ curl -s http://localhost:8080/metrics | python3 -m json.tool
 ```
 
 Salida esperada:
+
 ```json
 {
   "throughput_qps": 8.73,
@@ -206,8 +210,13 @@ Salida esperada:
   "retry_rate": 0.021,
   "dlq_count": 0,
   "dlq_rate": 0.0,
+  "error_count": 2,
+  "recovered_count": 5,
+  "recovery_time_s": 12.4,
+  "backlog_size": 3,
   "latency_p50_ms": 87.4,
-  "latency_p95_ms": 195.2
+  "latency_p95_ms": 195.2,
+  "uptime_s": 61.0
 }
 ```
 
@@ -219,17 +228,16 @@ docker compose logs -f response_generator
 docker compose logs -f producer
 ```
 
-
 ---
 
 ## Configuración de la Caché (Redis)
 
 Para cumplir con la rúbrica de la Tarea 2, el sistema incluye una configuración de caché definida con las siguientes características:
 
-* **Tamaño Máximo:** `128 MB`
-* **Política de Remoción (Algoritmo):** `allkeys-lru` (Least Recently Used)
-* **TTL (Time to Live):** Definido a nivel de código base dentro de `consumer/consumer.py`.
-* **Motor:** Redis 7
+- **Tamaño Máximo:** `128 MB`
+- **Política de Remoción (Algoritmo):** `allkeys-lru` (Least Recently Used)
+- **TTL (Time to Live):** Definido a nivel de código base dentro de `consumer/consumer.py`.
+- **Motor:** Redis 7
 
 *Nota: El límite de memoria y la política están configurados de forma nativa en el `docker-compose.yml` en los parámetros del contenedor `redis`. La caché se llena de manera automática a medida que fluyen las consultas (patrón Cache-Aside).*
 
@@ -237,13 +245,13 @@ Para cumplir con la rúbrica de la Tarea 2, el sistema incluye una configuració
 
 ## Variables de entorno importantes
 
-| Variable | Servicio | Default | Descripción |
-|----------|----------|---------|-------------|
-| `QUERIES_PER_SECOND` | producer | `10` | Tasa de generación |
-| `DISTRIBUTION` | producer | `zipf` | `zipf` o `uniform` |
-| `DURATION_SECONDS` | producer | `60` | Duración de la prueba |
-| `MAX_RETRIES` | consumer | `3` | Intentos antes de DLQ |
-| `FAILURE_RATE` | response_generator | `0.0` | Tasa de fallos simulados (0.0–1.0) |
+| Variable             | Servicio            | Default | Descripción                        |
+| -------------------- | ------------------- | ------- | ---------------------------------- |
+| `QUERIES_PER_SECOND` | producer            | `10`    | Tasa de generación                 |
+| `DISTRIBUTION`       | producer            | `zipf`  | `zipf` o `uniform`                 |
+| `DURATION_SECONDS`   | producer            | `60`    | Duración de la prueba              |
+| `MAX_RETRIES`        | consumer            | `3`     | Intentos antes de DLQ              |
+| `FAILURE_RATE`       | response_generator  | `0.0`   | Tasa de fallos simulados (0.0–1.0) |
 
 Puedes cambiarlos en `docker-compose.yml` o pasarlos con `-e` al ejecutar.
 
