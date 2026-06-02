@@ -8,7 +8,7 @@
 | Docker Compose Plugin     | 2.20+          | incluido con Docker Desktop / `sudo apt install docker-compose-plugin` |
 | (Opcional) curl + python3 | —              | para ver métricas desde terminal                                       |
 
-> **No necesitas instalar Kafka, Python ni Redis localmente.** Todo corre dentro de Docker.
+> **No se necesita instalar Kafka, Python ni Redis localmente.** Todo corre dentro de Docker.
 
 ---
 
@@ -16,7 +16,7 @@
 
 ```
 tarea2/
-├── docker-compose.yml          ← orquestación de todos los servicios
+├── docker-compose.yml          ← coordinacción de todos los servicios
 ├── producer/
 │   ├── Dockerfile
 │   └── producer.py             ← generador de tráfico (Zipf / Uniforme)
@@ -61,7 +61,7 @@ docker compose up -d kafka redis response_generator metrics
 ### Verificar que Kafka está listo
 
 ```bash
-# Listar tópicos (debe responder sin error)
+
 docker exec kafka kafka-topics \
   --bootstrap-server localhost:9092 --list
 ```
@@ -93,68 +93,95 @@ watch -n 2 "curl -s http://localhost:8080/metrics | python3 -m json.tool"
 
 ## Escenarios de evaluación
 
-Usa el script helper (requiere bash):
-
 ```bash
 chmod +x scripts/run_scenarios.sh
-
-# Escenario: Kafka + 1 consumer
-./scripts/run_scenarios.sh kafka1
-
-# Escenario: Kafka + 3 consumers
-./scripts/run_scenarios.sh kafka_multi 3
-
-# Escenario: Falla temporal del generador de respuestas
-./scripts/run_scenarios.sh failure
-
-# Escenario: Spike de tráfico
-./scripts/run_scenarios.sh spike
-
-# Ejecutar todos en secuencia
-./scripts/run_scenarios.sh all
-
-# Apagar todo
-./scripts/run_scenarios.sh down
 ```
 
-### O manualmente, paso a paso:
+| Comando | Descripción | Duración aprox. |
+| ------- | ----------- | --------------- |
+| `./scripts/run_scenarios.sh kafka1` | Kafka + 1 consumer (60s, 10 qps, Zipf) | ~90s |
+| `./scripts/run_scenarios.sh kafka_multi 3` | Kafka + N consumers (default 3) | ~90s |
+| `./scripts/run_scenarios.sh failure` | Falla temporal del Generador de Respuestas | ~120s |
+| `./scripts/run_scenarios.sh retry` | 30% fallos aleatorios — mide retry/DLQ rate | ~90s |
+| `./scripts/run_scenarios.sh spike` | Spike de tráfico (5 → 50 → 5 qps) | ~90s |
+| `./scripts/run_scenarios.sh all` | Todos los escenarios en secuencia | ~15 min |
+| `./scripts/run_scenarios.sh down` | Detener y limpiar todos los servicios | — |
 
-#### Escenario: Kafka + múltiples consumers
+Cada escenario guarda sus métricas en `results_<nombre>.json` al finalizar.
+
+### Escenario: Kafka + múltiples consumers
 
 ```bash
-# Levantar 3 consumers del mismo grupo (balanceo automático)
+# 1 consumer
+./scripts/run_scenarios.sh kafka1
+
+# 3 consumers (default)
+./scripts/run_scenarios.sh kafka_multi
+
+# N consumers arbitrario
+./scripts/run_scenarios.sh kafka_multi 5
+```
+
+O manualmente:
+
+```bash
 docker compose up -d --scale consumer=3 consumer
-
-# Ver que los 3 están corriendo
 docker compose ps consumer
-
-# Ver logs de todos en paralelo
 docker compose logs -f consumer
 ```
 
-#### Escenario: Simular falla del generador de respuestas
+### Escenario: Falla temporal
 
 ```bash
-# Detener el generador (simula falla)
+./scripts/run_scenarios.sh failure
+```
+
+Esto levanta 2 consumers → corre producer 90s → detiene `response_generator` 20s → lo restaura → espera recuperación → muestra métricas.
+
+O manualmente:
+
+```bash
+# Detiene el generador (simula falla)
 docker compose stop response_generator
 
-# Los consumers reintentarán hasta MAX_RETRIES veces, luego van a DLQ
-# Ver las métricas mientras falla:
+# Consumers reintentarán hasta MAX_RETRIES veces, luego DLQ
 curl -s http://localhost:8080/metrics | python3 -m json.tool
 
 # Restaurar
 docker compose start response_generator
 ```
 
-#### Escenario: Inyectar tasa de fallos aleatorios (sin detener el servicio)
+### Escenario: Reintentos con fallos aleatorios
 
 ```bash
-# 30% de fallos aleatorios
+./scripts/run_scenarios.sh retry
+```
+
+Inyecta 30% de fallos aleatorios via API sin detener el servicio, para observar retry rate y DLQ rate con el generador con capacidad reducida.
+
+O manualmente:
+
+```bash
+# Inyectar 30% de fallos
 curl -X POST "http://localhost:8000/set_failure_rate?rate=0.3"
 
-# Volver a 0%
+# Ver métricas
+curl -s http://localhost:8080/metrics | python3 -m json.tool
+
+# Restaurar
 curl -X POST "http://localhost:8000/set_failure_rate?rate=0.0"
 ```
+
+### Escenario: Spike de tráfico
+
+```bash
+./scripts/run_scenarios.sh spike
+```
+
+Ejecuta 3 fases consecutivas:
+1. Tráfico normal: 5 qps × 20s
+2. Spike: 50 qps × 15s (distribución uniforme)
+3. Vuelta a normal: 5 qps × 30s
 
 ---
 
@@ -232,7 +259,7 @@ docker compose logs -f producer
 
 ## Configuración de la Caché (Redis)
 
-Para cumplir con la rúbrica de la Tarea 2, el sistema incluye una configuración de caché definida con las siguientes características:
+El sistema incluye una configuración de caché definida con las siguientes características:
 
 - **Tamaño Máximo:** `128 MB`
 - **Política de Remoción (Algoritmo):** `allkeys-lru` (Least Recently Used)
@@ -253,12 +280,12 @@ Para cumplir con la rúbrica de la Tarea 2, el sistema incluye una configuració
 | `MAX_RETRIES`        | consumer            | `3`     | Intentos antes de DLQ              |
 | `FAILURE_RATE`       | response_generator  | `0.0`   | Tasa de fallos simulados (0.0–1.0) |
 
-Puedes cambiarlos en `docker-compose.yml` o pasarlos con `-e` al ejecutar.
+Se pueden cambiar en `docker-compose.yml` o pasarlos con `-e` al ejecutar.
 
 ---
 
 ## Apagar todo
 
 ```bash
-docker compose down -v   # -v elimina los volúmenes de Kafka
+docker compose down -v
 ```

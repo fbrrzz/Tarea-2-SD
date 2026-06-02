@@ -22,15 +22,15 @@ services:
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
-      # Configuración de red interna y externa para Docker
       KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:9092'
       KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:9092'
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'PLAINTEXT:PLAINTEXT'
       KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 6
     healthcheck:
-      # En las imágenes de Confluent, los comandos están directo en el PATH (más limpio)
+
       test: ["CMD-SHELL", "kafka-topics --bootstrap-server kafka:9092 --list || exit 1"]
       interval: 10s
       timeout: 10s
@@ -64,7 +64,7 @@ services:
       kafka:
         condition: service_healthy
 
-  # ─── Consumidor(es) Kafka ─────────────────────────────────────────────────────
+  # ─── Consumidores Kafka ─────────────────────────────────────────────────────
   consumer:
     build: ./consumer
     environment:

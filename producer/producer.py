@@ -1,10 +1,3 @@
-"""
-Generador de Tráfico (Kafka Producer)
---------------------------------------
-Genera consultas Q1-Q5 con distribución Zipf o Uniforme sobre zonas
-de la Región Metropolitana de Santiago y las publica en Kafka.
-"""
-
 import json, os, time, uuid, logging
 import numpy as np
 from kafka import KafkaProducer
@@ -18,7 +11,7 @@ log = logging.getLogger(__name__)
 
 KAFKA_BOOTSTRAP    = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
 QUERIES_PER_SECOND = float(os.getenv("QUERIES_PER_SECOND", "10"))
-DISTRIBUTION       = os.getenv("DISTRIBUTION", "zipf")   # zipf | uniform
+DISTRIBUTION       = os.getenv("DISTRIBUTION", "zipf")
 DURATION_SECONDS   = int(os.getenv("DURATION_SECONDS", "60"))
 TOPIC              = "geo-queries"
 
@@ -28,11 +21,12 @@ ZONES = [
 ]
 QUERY_TYPES = ["Q1", "Q2", "Q3", "Q4", "Q5"]
 
+
 def zipf_distribution(n: int, s: float = 1.2) -> np.ndarray:
-    """Distribución Zipf sobre n elementos con parámetro s."""
     ranks = np.arange(1, n + 1, dtype=float)
     weights = 1.0 / np.power(ranks, s)
     return weights / weights.sum()
+
 
 def make_producer():
     while True:
@@ -47,17 +41,18 @@ def make_producer():
             log.warning("Esperando Kafka: %s", e)
             time.sleep(3)
 
+
 def pick_zone(distribution: str) -> str:
     if distribution == "zipf":
-        probs = zipf_distribution(len(ZONES))
-        return np.random.choice(ZONES, p=probs)
-    return np.random.choice(ZONES)   # uniforme
+        return np.random.choice(ZONES, p=zipf_distribution(len(ZONES)))
+    return np.random.choice(ZONES)
+
 
 def pick_query_type(distribution: str) -> str:
     if distribution == "zipf":
-        probs = zipf_distribution(len(QUERY_TYPES))
-        return np.random.choice(QUERY_TYPES, p=probs)
+        return np.random.choice(QUERY_TYPES, p=zipf_distribution(len(QUERY_TYPES)))
     return np.random.choice(QUERY_TYPES)
+
 
 def main():
     producer = make_producer()
@@ -89,11 +84,11 @@ def main():
             log.error("Error enviando consulta: %s", e)
 
         elapsed = time.time() - t0
-        sleep   = max(0.0, interval - elapsed)
-        time.sleep(sleep)
+        time.sleep(max(0.0, interval - elapsed))
 
     producer.flush()
     log.info("Generación completada. Total enviadas: %d", sent)
+
 
 if __name__ == "__main__":
     main()
