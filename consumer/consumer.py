@@ -1,18 +1,6 @@
-"""
-Consumidor Kafka
-----------------
-- Consume del tópico principal 'geo-queries'
-- Verifica caché Redis (hit → responde inmediato)
-- Cache miss → llama al Generador de Respuestas
-- Falla temporal → publica en tópico de reintento
-- retry_count >= MAX_RETRIES → publica en DLQ
-- Reporta todas las métricas al servicio de métricas
-"""
-
-import json, os, time, logging, socket, threading
+import json, os, time, logging, threading
 import redis, requests
 from kafka import KafkaConsumer, KafkaProducer
-from kafka.errors import KafkaError
 
 logging.basicConfig(
     level=logging.INFO,
@@ -20,7 +8,6 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# ── Config via variables de entorno ──────────────────────────────────────────
 KAFKA_BOOTSTRAP        = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
 REDIS_HOST             = os.getenv("REDIS_HOST", "localhost")
 RESPONSE_GENERATOR_URL = os.getenv("RESPONSE_GENERATOR_URL", "http://localhost:8000")
@@ -28,14 +15,13 @@ METRICS_URL            = os.getenv("METRICS_URL", "http://localhost:8080")
 MAX_RETRIES            = int(os.getenv("MAX_RETRIES", "3"))
 CONSUMER_GROUP         = os.getenv("CONSUMER_GROUP", "geo-consumers")
 
-TOPIC_MAIN    = "geo-queries"
-TOPIC_RETRY   = "geo-queries-retry"
-TOPIC_DLQ     = "geo-queries-dlq"
+TOPIC_MAIN  = "geo-queries"
+TOPIC_RETRY = "geo-queries-retry"
+TOPIC_DLQ   = "geo-queries-dlq"
 
-CACHE_TTL     = 300   # segundos
-CACHE_SIZE    = 500   # máximo de keys (gestionado por Redis con allkeys-lru)
+CACHE_TTL = 300
 
-# ── Clientes ─────────────────────────────────────────────────────────────────
+
 def make_consumer():
     while True:
         try:
@@ -53,6 +39,7 @@ def make_consumer():
             log.warning("Esperando Kafka: %s", e)
             time.sleep(3)
 
+
 def make_producer():
     while True:
         try:
@@ -65,6 +52,7 @@ def make_producer():
             log.warning("Esperando Kafka producer: %s", e)
             time.sleep(3)
 
+
 def make_redis():
     while True:
         try:
@@ -76,7 +64,7 @@ def make_redis():
             log.warning("Esperando Redis: %s", e)
             time.sleep(2)
 
-# ── Métricas (best-effort, no bloquea el flujo) ───────────────────────────────
+
 def report(event: str, latency_ms: float = None, query_id: str = None):
     try:
         requests.post(
@@ -87,19 +75,17 @@ def report(event: str, latency_ms: float = None, query_id: str = None):
     except Exception:
         pass
 
-# ── Lógica principal ──────────────────────────────────────────────────────────
+
 def process_message(msg, cache: redis.Redis, producer: KafkaProducer):
-    query = msg.value
+    query       = msg.value
     query_id    = query.get("query_id", "unknown")
     query_type  = query.get("query_type", "Q1")
     zone        = query.get("zone", "santiago")
     retry_count = query.get("retry_count", 0)
-    created_at  = query.get("created_at", time.time())
 
-    t_start = time.time()
+    t_start   = time.time()
     cache_key = f"{query_type}:{zone}"
 
-    # ── 1. Verificar caché ────────────────────────────────────────────────────
     cached = cache.get(cache_key)
     if cached:
         latency = (time.time() - t_start) * 1000
@@ -109,7 +95,6 @@ def process_message(msg, cache: redis.Redis, producer: KafkaProducer):
 
     report("cache_miss", query_id=query_id)
 
-    # ── 2. Llamar al Generador de Respuestas ──────────────────────────────────
     try:
         resp = requests.post(
             f"{RESPONSE_GENERATOR_URL}/process",
@@ -135,7 +120,6 @@ def process_message(msg, cache: redis.Redis, producer: KafkaProducer):
         report("error", query_id=query_id)
         log.warning("FALLO  %s | intento %d | %s", query_id, retry_count + 1, e)
 
-        # ── 3. Reintento o DLQ ────────────────────────────────────────────────
         if retry_count + 1 >= MAX_RETRIES:
             producer.send(TOPIC_DLQ, {**query, "retry_count": retry_count + 1, "final_error": str(e)})
             report("dlq", query_id=query_id)
@@ -153,34 +137,32 @@ def main():
     producer = make_producer()
     cache    = make_redis()
 
-    # ── Hilo de backlog: reporta consumer lag cada 10 segundos ───────────────
     def backlog_reporter():
-        from kafka import KafkaAdminClient
         from kafka.structs import TopicPartition
         while True:
             try:
-                # Usamos el mismo consumer para obtener el lag
-                partitions = consumer.partitions_for_topic(TOPIC_MAIN) or set()
                 total_lag = 0
-                for p in partitions:
-                    tp = TopicPartition(TOPIC_MAIN, p)
-                    end_offsets = consumer.end_offsets([tp])
-                    committed   = consumer.committed(tp) or 0
-                    total_lag  += max(end_offsets.get(tp, 0) - committed, 0)
+                for topic in (TOPIC_MAIN, TOPIC_RETRY):
+                    partitions = consumer.partitions_for_topic(topic) or set()
+                    for p in partitions:
+                        tp = TopicPartition(topic, p)
+                        end_offsets = consumer.end_offsets([tp])
+                        committed   = consumer.committed(tp) or 0
+                        total_lag  += max(end_offsets.get(tp, 0) - committed, 0)
                 report("backlog", latency_ms=total_lag)
                 log.debug("BACKLOG %d mensajes pendientes", total_lag)
             except Exception as e:
                 log.debug("backlog_reporter error: %s", e)
             time.sleep(10)
 
-    t = threading.Thread(target=backlog_reporter, daemon=True)
-    t.start()
+    threading.Thread(target=backlog_reporter, daemon=True).start()
 
     for msg in consumer:
         try:
             process_message(msg, cache, producer)
         except Exception as e:
             log.exception("Error inesperado procesando mensaje: %s", e)
+
 
 if __name__ == "__main__":
     main()
