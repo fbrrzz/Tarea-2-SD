@@ -58,36 +58,7 @@ docker compose config
 docker compose up -d kafka redis response_generator metrics
 ```
 
-### Verificar que Kafka está listo
 
-```bash
-
-docker exec kafka kafka-topics \
-  --bootstrap-server localhost:9092 --list
-```
-
-### Levantar 1 consumidor
-
-```bash
-docker compose up -d --scale consumer=1 consumer
-```
-
-### Ejecutar el generador de tráfico (60 segundos, 10 qps, distribución Zipf)
-
-```bash
-docker compose run --rm \
-  -e QUERIES_PER_SECOND=10 \
-  -e DISTRIBUTION=zipf \
-  -e DURATION_SECONDS=60 \
-  producer
-```
-
-### Ver métricas en tiempo real
-
-```bash
-# En otra terminal:
-watch -n 2 "curl -s http://localhost:8080/metrics | python3 -m json.tool"
-```
 
 ---
 
@@ -122,14 +93,6 @@ Cada escenario guarda sus métricas en `results_<nombre>.json` al finalizar.
 ./scripts/run_scenarios.sh kafka_multi 5
 ```
 
-O manualmente:
-
-```bash
-docker compose up -d --scale consumer=3 consumer
-docker compose ps consumer
-docker compose logs -f consumer
-```
-
 ### Escenario: Falla temporal
 
 ```bash
@@ -138,18 +101,6 @@ docker compose logs -f consumer
 
 Esto levanta 2 consumers → corre producer 90s → detiene `response_generator` 20s → lo restaura → espera recuperación → muestra métricas.
 
-O manualmente:
-
-```bash
-# Detiene el generador (simula falla)
-docker compose stop response_generator
-
-# Consumers reintentarán hasta MAX_RETRIES veces, luego DLQ
-curl -s http://localhost:8080/metrics | python3 -m json.tool
-
-# Restaurar
-docker compose start response_generator
-```
 
 ### Escenario: Reintentos con fallos aleatorios
 
@@ -159,18 +110,6 @@ docker compose start response_generator
 
 Inyecta 30% de fallos aleatorios via API sin detener el servicio, para observar retry rate y DLQ rate con el generador con capacidad reducida.
 
-O manualmente:
-
-```bash
-# Inyectar 30% de fallos
-curl -X POST "http://localhost:8000/set_failure_rate?rate=0.3"
-
-# Ver métricas
-curl -s http://localhost:8080/metrics | python3 -m json.tool
-
-# Restaurar
-curl -X POST "http://localhost:8000/set_failure_rate?rate=0.0"
-```
 
 ### Escenario: Spike de tráfico
 
@@ -255,6 +194,12 @@ docker compose logs -f response_generator
 docker compose logs -f producer
 ```
 
+### Ver métricas en tiempo real
+
+```bash
+# En otra terminal:
+watch -n 2 "curl -s http://localhost:8080/metrics | python3 -m json.tool"
+```
 ---
 
 ## Configuración de la Caché (Redis)
